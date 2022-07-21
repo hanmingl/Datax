@@ -1,5 +1,8 @@
 package com.alibaba.datax.core.util;
 
+import com.alibaba.datax.common.util.StrUtil;
+import com.alibaba.datax.core.statistics.communication.CommunicationTool;
+
 /**
  * @author hml
  * @date 2022/7/21
@@ -168,21 +171,26 @@ public class DataxResult {
 
     @Override
     public String toString() {
-        return "DataxResult{" +
-                "任务启动时刻=" + startTimeStamp +
-                ", 任务结束时刻=" + endTimeStamp +
-                ", 任务总时耗=" + totalCosts +
-                ", 任务平均流量=" + byteSpeedPerSecond +
-                ", 记录写入速度=" + recordSpeedPerSecond +
-                ", 读出记录总数=" + totalReadRecords +
-                ", 读写失败总数=" + totalErrorRecords +
-                ", 成功记录总数=" + transformerSucceedRecords +
-                ", 失败记录总数=" + transformerFailedRecords +
-                ", 过滤记录总数=" + transformerFilterRecords +
-                ", 字节数=" + readSucceedBytes +
-                ", 转换开始时间=" + endTransferTimeStamp +
-                ", 转换结束时间=" + startTransferTimeStamp +
-                ", 转换总耗时=" + transferCosts +
-                '}';
+        return String.format(
+                "\n" + "%-26s: %-18s\n" + "%-26s: %-18s\n" + "%-26s: %19s\n"
+                        + "%-26s: %19s\n" + "%-26s: %19s\n" + "%-26s: %19s\n"
+                        + "%-26s: %19s\n",
+                "任务启动时刻",
+                startTimeStamp,
+
+                "任务结束时刻",
+                endTimeStamp,
+
+                "任务总计耗时",
+                String.valueOf(totalCosts) + "s",
+                "任务平均流量",
+                StrUtil.stringify(byteSpeedPerSecond)
+                        + "/s",
+                "记录写入速度",
+                String.valueOf(recordSpeedPerSecond)
+                        + "rec/s", "读出记录总数",
+                totalReadRecords,
+                "读写失败总数",
+                totalErrorRecords);
     }
 }
