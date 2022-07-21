@@ -2,6 +2,7 @@ package com.alibaba.datax.core;
 
 import com.alibaba.datax.common.util.Configuration;
 import com.alibaba.datax.core.statistics.container.communicator.AbstractContainerCommunicator;
+import com.alibaba.datax.core.util.DataxResult;
 import org.apache.commons.lang.Validate;
 
 /**
@@ -31,5 +32,7 @@ public abstract class AbstractContainer {
     }
 
     public abstract void start();
+
+    public abstract DataxResult start(DataxResult dataxResult);
 
 }

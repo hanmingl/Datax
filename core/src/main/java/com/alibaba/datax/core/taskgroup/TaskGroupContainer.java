@@ -22,6 +22,7 @@ import com.alibaba.datax.core.transport.exchanger.BufferedRecordExchanger;
 import com.alibaba.datax.core.transport.exchanger.BufferedRecordTransformerExchanger;
 import com.alibaba.datax.core.transport.transformer.TransformerExecution;
 import com.alibaba.datax.core.util.ClassUtil;
+import com.alibaba.datax.core.util.DataxResult;
 import com.alibaba.datax.core.util.FrameworkErrorCode;
 import com.alibaba.datax.core.util.TransformerUtil;
 import com.alibaba.datax.core.util.container.CoreConstant;
@@ -296,7 +297,12 @@ public class TaskGroupContainer extends AbstractContainer {
             }
         }
     }
-    
+
+    @Override
+    public DataxResult start(DataxResult dataxResult) {
+        return null;
+    }
+
     private Map<Integer, Configuration> buildTaskConfigMap(List<Configuration> configurations){
     	Map<Integer, Configuration> map = new HashMap<Integer, Configuration>();
     	for(Configuration taskConfig : configurations){

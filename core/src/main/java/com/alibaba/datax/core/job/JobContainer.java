@@ -21,6 +21,7 @@ import com.alibaba.datax.core.statistics.communication.CommunicationTool;
 import com.alibaba.datax.core.statistics.container.communicator.AbstractContainerCommunicator;
 import com.alibaba.datax.core.statistics.container.communicator.job.StandAloneJobContainerCommunicator;
 import com.alibaba.datax.core.statistics.plugin.DefaultJobPluginCollector;
+import com.alibaba.datax.core.util.DataxResult;
 import com.alibaba.datax.core.util.ErrorRecordChecker;
 import com.alibaba.datax.core.util.FrameworkErrorCode;
 import com.alibaba.datax.core.util.container.ClassLoaderSwapper;
@@ -179,6 +180,96 @@ public class JobContainer extends AbstractContainer {
                 }
             }
         }
+    }
+
+    @Override
+    public DataxResult start(DataxResult dataxResult) {
+        LOG.info("DataX jobContainer starts job.");
+
+        boolean hasException = false;
+        boolean isDryRun = false;
+        try {
+            this.startTimeStamp = System.currentTimeMillis();
+            isDryRun = configuration.getBool(CoreConstant.DATAX_JOB_SETTING_DRYRUN, false);
+            if(isDryRun) {
+                LOG.info("jobContainer starts to do preCheck ...");
+                this.preCheck();
+            } else {
+                userConf = configuration.clone();
+                LOG.debug("jobContainer starts to do preHandle ...");
+                this.preHandle();
+
+                LOG.debug("jobContainer starts to do init ...");
+                this.init();
+                LOG.info("jobContainer starts to do prepare ...");
+                this.prepare();
+                LOG.info("jobContainer starts to do split ...");
+                this.totalStage = this.split();
+                LOG.info("jobContainer starts to do schedule ...");
+                this.schedule();
+                LOG.debug("jobContainer starts to do post ...");
+                this.post();
+
+                LOG.debug("jobContainer starts to do postHandle ...");
+                this.postHandle();
+                LOG.info("DataX jobId [{}] completed successfully.", this.jobId);
+
+                this.invokeHooks();
+            }
+        } catch (Throwable e) {
+            LOG.error("Exception when job run", e);
+
+            hasException = true;
+
+            if (e instanceof OutOfMemoryError) {
+                this.destroy();
+                System.gc();
+            }
+
+
+            if (super.getContainerCommunicator() == null) {
+                // 由于 containerCollector 是在 scheduler() 中初始化的，所以当在 scheduler() 之前出现异常时，需要在此处对 containerCollector 进行初始化
+
+                AbstractContainerCommunicator tempContainerCollector;
+                // standalone
+                tempContainerCollector = new StandAloneJobContainerCommunicator(configuration);
+
+                super.setContainerCommunicator(tempContainerCollector);
+            }
+
+            Communication communication = super.getContainerCommunicator().collect();
+            // 汇报前的状态，不需要手动进行设置
+            // communication.setState(State.FAILED);
+            communication.setThrowable(e);
+            communication.setTimestamp(this.endTimeStamp);
+
+            Communication tempComm = new Communication();
+            tempComm.setTimestamp(this.startTransferTimeStamp);
+
+            Communication reportCommunication = CommunicationTool.getReportCommunication(communication, tempComm, this.totalStage);
+            super.getContainerCommunicator().report(reportCommunication);
+
+            throw DataXException.asDataXException(
+                    FrameworkErrorCode.RUNTIME_ERROR, e);
+        } finally {
+            if(!isDryRun) {
+
+                this.destroy();
+                this.endTimeStamp = System.currentTimeMillis();
+                if (!hasException) {
+                    //最后打印cpu的平均消耗，GC的统计
+                    VMInfo vmInfo = VMInfo.getVmInfo();
+                    if (vmInfo != null) {
+                        vmInfo.getDelta(false);
+                        LOG.info(vmInfo.totalString());
+                    }
+
+                    LOG.info(PerfTrace.getInstance().summarizeNoException());
+                    return logStatistics(dataxResult);
+                }
+            }
+        }
+        return dataxResult;
     }
 
     private void preCheck() {
@@ -644,6 +735,91 @@ public class JobContainer extends AbstractContainer {
         }
 
 
+    }
+    private DataxResult logStatistics(DataxResult resultMsg) {
+        long totalCosts = (this.endTimeStamp - this.startTimeStamp) / 1000;
+        long transferCosts = (this.endTransferTimeStamp - this.startTransferTimeStamp) / 1000;
+        if (0L == transferCosts) {
+            transferCosts = 1L;
+        }
+
+        if (super.getContainerCommunicator() == null) {
+            return new DataxResult();
+        }
+
+        Communication communication = super.getContainerCommunicator().collect();
+        communication.setTimestamp(this.endTimeStamp);
+
+        Communication tempComm = new Communication();
+        tempComm.setTimestamp(this.startTransferTimeStamp);
+
+        Communication reportCommunication = CommunicationTool.getReportCommunication(communication, tempComm, this.totalStage);
+
+        // 字节速率
+        long byteSpeedPerSecond = communication.getLongCounter(CommunicationTool.READ_SUCCEED_BYTES)
+                / transferCosts;
+
+        long recordSpeedPerSecond = communication.getLongCounter(CommunicationTool.READ_SUCCEED_RECORDS)
+                / transferCosts;
+
+        reportCommunication.setLongCounter(CommunicationTool.BYTE_SPEED, byteSpeedPerSecond);
+        reportCommunication.setLongCounter(CommunicationTool.RECORD_SPEED, recordSpeedPerSecond);
+
+        super.getContainerCommunicator().report(reportCommunication);
+
+
+        LOG.info(String.format(
+                "\n" + "%-26s: %-18s\n" + "%-26s: %-18s\n" + "%-26s: %19s\n"
+                        + "%-26s: %19s\n" + "%-26s: %19s\n" + "%-26s: %19s\n"
+                        + "%-26s: %19s\n",
+                "任务启动时刻",
+                dateFormat.format(startTimeStamp),
+
+                "任务结束时刻",
+                dateFormat.format(endTimeStamp),
+
+                "任务总计耗时",
+                String.valueOf(totalCosts) + "s",
+                "任务平均流量",
+                StrUtil.stringify(byteSpeedPerSecond)
+                        + "/s",
+                "记录写入速度",
+                String.valueOf(recordSpeedPerSecond)
+                        + "rec/s", "读出记录总数",
+                String.valueOf(CommunicationTool.getTotalReadRecords(communication)),
+                "读写失败总数",
+                String.valueOf(CommunicationTool.getTotalErrorRecords(communication))
+        ));
+
+        if (communication.getLongCounter(CommunicationTool.TRANSFORMER_SUCCEED_RECORDS) > 0
+                || communication.getLongCounter(CommunicationTool.TRANSFORMER_FAILED_RECORDS) > 0
+                || communication.getLongCounter(CommunicationTool.TRANSFORMER_FILTER_RECORDS) > 0) {
+            LOG.info(String.format(
+                    "\n" + "%-26s: %19s\n" + "%-26s: %19s\n" + "%-26s: %19s\n",
+                    "Transformer成功记录总数",
+                    communication.getLongCounter(CommunicationTool.TRANSFORMER_SUCCEED_RECORDS),
+
+                    "Transformer失败记录总数",
+                    communication.getLongCounter(CommunicationTool.TRANSFORMER_FAILED_RECORDS),
+
+                    "Transformer过滤记录总数",
+                    communication.getLongCounter(CommunicationTool.TRANSFORMER_FILTER_RECORDS)
+            ));
+        }
+        return new DataxResult(startTimeStamp,
+                endTimeStamp,
+                totalCosts,
+                byteSpeedPerSecond,
+                recordSpeedPerSecond,
+                CommunicationTool.getTotalReadRecords(communication),
+                CommunicationTool.getTotalErrorRecords(communication),
+                communication.getLongCounter(CommunicationTool.TRANSFORMER_SUCCEED_RECORDS),
+                communication.getLongCounter(CommunicationTool.TRANSFORMER_FAILED_RECORDS),
+                communication.getLongCounter(CommunicationTool.TRANSFORMER_FILTER_RECORDS),
+                communication.getLongCounter(CommunicationTool.READ_SUCCEED_BYTES),
+                this.endTransferTimeStamp,
+                this.startTransferTimeStamp,
+                transferCosts);
     }
 
     /**
